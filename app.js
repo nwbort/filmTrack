@@ -427,13 +427,45 @@
       wrap.appendChild(grid);
     }
 
-    // FAB for capture
+    // FAB menu for capture/upload
+    const fabWrap = el('div', { className: 'fab-wrap' });
+
+    const fabMenu = el('div', { className: 'fab-menu hidden' },
+      el('button', {
+        className: 'fab-menu-item',
+        onClick: () => { fabMenu.classList.add('hidden'); startCapture(rollId, frames.length + 1, roll.frameCount, 'camera'); },
+        'aria-label': 'Take photo'
+      }, '\u{1F4F7}', el('span', { className: 'fab-menu-label' }, 'Take Photo')),
+      el('button', {
+        className: 'fab-menu-item',
+        onClick: () => { fabMenu.classList.add('hidden'); startCapture(rollId, frames.length + 1, roll.frameCount, 'file'); },
+        'aria-label': 'Upload file'
+      }, '\u{1F4C1}', el('span', { className: 'fab-menu-label' }, 'Upload File'))
+    );
+
+    const closeFabMenu = (e) => {
+      if (!fabWrap.contains(e.target)) {
+        fabMenu.classList.add('hidden');
+        document.removeEventListener('click', closeFabMenu);
+      }
+    };
+
     const fab = el('button', {
       className: 'fab',
-      onClick: () => startCapture(rollId, frames.length + 1, roll.frameCount),
-      'aria-label': 'Capture frame'
+      onClick: () => {
+        const isNowHidden = fabMenu.classList.toggle('hidden');
+        if (!isNowHidden) {
+          setTimeout(() => document.addEventListener('click', closeFabMenu), 0);
+        } else {
+          document.removeEventListener('click', closeFabMenu);
+        }
+      },
+      'aria-label': 'Add frame'
     }, '\u{1F4F7}');
-    wrap.appendChild(fab);
+
+    fabWrap.appendChild(fabMenu);
+    fabWrap.appendChild(fab);
+    wrap.appendChild(fabWrap);
 
     setContent(wrap);
   }
@@ -441,8 +473,8 @@
   // ---------------------------------------------------------------------------
   // Frame Capture
   // ---------------------------------------------------------------------------
-  function startCapture(rollId, nextFrame, maxFrames) {
-    const input = $('#camera-input');
+  function startCapture(rollId, nextFrame, maxFrames, mode) {
+    const input = mode === 'file' ? $('#file-input') : $('#camera-input');
     input.value = '';
     input.onchange = async () => {
       const file = input.files[0];
