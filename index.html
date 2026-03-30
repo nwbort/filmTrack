@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>FilmTrack</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="app-bar">
+    <button id="back-btn" class="icon-btn hidden" aria-label="Back">&#8592;</button>
+    <h1 id="app-title">FilmTrack</h1>
+    <div id="app-bar-actions"></div>
+  </header>
+
+  <main id="app-content"></main>
+
+  <nav id="bottom-nav">
+    <button class="nav-tab active" data-tab="rolls">
+      <span class="nav-icon">&#127902;</span>
+      <span class="nav-label">Rolls</span>
+    </button>
+    <button class="nav-tab" data-tab="export">
+      <span class="nav-icon">&#128229;</span>
+      <span class="nav-label">Export</span>
+    </button>
+  </nav>
+
+  <input type="file" id="camera-input" accept="image/*" capture="environment" class="hidden">
+
+  <script src="app.js"></script>
+</body>
+</html>

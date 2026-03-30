@@ -1,0 +1,17 @@
+{
+  "name": "FilmTrack",
+  "short_name": "FilmTrack",
+  "description": "Track film photography metadata",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#1a1a2e",
+  "theme_color": "#1a1a2e",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='24' fill='%231a1a2e'/><text x='96' y='120' text-anchor='middle' font-size='96' fill='%23e0e0e0'>🎞</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
