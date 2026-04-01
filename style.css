@@ -229,10 +229,17 @@ html, body {
 .gps-dot.warn { background: var(--gps-warn); }
 
 /* FAB */
-.fab {
+.fab-wrap {
   position: fixed;
   bottom: calc(76px + var(--safe-bottom));
   right: 20px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.fab {
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -245,11 +252,44 @@ html, body {
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(233,69,96,0.4);
-  z-index: 50;
 }
 
 .fab:active {
   background: var(--accent-dim);
+}
+
+.fab-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.fab-menu.hidden {
+  display: none;
+}
+
+.fab-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: none;
+  border-radius: 28px;
+  padding: 10px 16px 10px 12px;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  white-space: nowrap;
+}
+
+.fab-menu-item:active {
+  background: var(--surface-alt, #3a3a4a);
+}
+
+.fab-menu-label {
+  font-size: 14px;
 }
 
 /* Dialog / Modal */
