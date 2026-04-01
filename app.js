@@ -301,9 +301,11 @@
       }
     }
 
-    // FAB
+    // FAB (fixed position)
+    const fabWrap = el('div', { className: 'fab-wrap' });
     const fab = el('button', { className: 'fab', onClick: openNewRollDialog, 'aria-label': 'New roll' }, '+');
-    wrap.appendChild(fab);
+    fabWrap.appendChild(fab);
+    wrap.appendChild(fabWrap);
 
     setContent(wrap);
   }
