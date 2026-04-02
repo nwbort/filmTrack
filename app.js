@@ -162,6 +162,179 @@
   }
 
   // ---------------------------------------------------------------------------
+  // EXIF metadata extraction
+  // ---------------------------------------------------------------------------
+  function extractExifData(blob) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = function () {
+        try {
+          const view = new DataView(reader.result);
+          // Check JPEG SOI marker
+          if (view.getUint16(0) !== 0xFFD8) { resolve(null); return; }
+          let offset = 2;
+          while (offset < view.byteLength - 1) {
+            const marker = view.getUint16(offset);
+            if (marker === 0xFFE1) { // APP1 (EXIF)
+              const length = view.getUint16(offset + 2);
+              const exifBlock = offset + 4;
+              // Check "Exif\0\0"
+              if (view.getUint32(exifBlock) === 0x45786966 && view.getUint16(exifBlock + 4) === 0x0000) {
+                const tiffStart = exifBlock + 6;
+                const result = parseExifTiff(view, tiffStart);
+                resolve(result);
+                return;
+              }
+              offset += 2 + length;
+            } else if ((marker & 0xFF00) === 0xFF00) {
+              if (marker === 0xFFDA) break; // Start of scan, stop
+              offset += 2 + view.getUint16(offset + 2);
+            } else {
+              break;
+            }
+          }
+          resolve(null);
+        } catch (e) {
+          resolve(null);
+        }
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+
+  function parseExifTiff(view, tiffStart) {
+    const bigEndian = view.getUint16(tiffStart) === 0x4D4D;
+    const g16 = (o) => view.getUint16(o, !bigEndian);
+    const g32 = (o) => view.getUint32(o, !bigEndian);
+
+    function getRational(offset) {
+      const num = g32(offset);
+      const den = g32(offset + 4);
+      return den ? num / den : 0;
+    }
+
+    function readString(offset, count) {
+      let s = '';
+      for (let i = 0; i < count - 1; i++) {
+        const c = view.getUint8(offset + i);
+        if (c === 0) break;
+        s += String.fromCharCode(c);
+      }
+      return s.trim();
+    }
+
+    function readIFDEntries(ifdOffset) {
+      const entries = {};
+      const count = g16(ifdOffset);
+      for (let i = 0; i < count; i++) {
+        const entryOffset = ifdOffset + 2 + i * 12;
+        const tag = g16(entryOffset);
+        const type = g16(entryOffset + 2);
+        const numValues = g32(entryOffset + 4);
+        const valueOffset = entryOffset + 8;
+        entries[tag] = { type, numValues, valueOffset };
+      }
+      return entries;
+    }
+
+    function getEntryValue(entry) {
+      const dataSize = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8][entry.type] || 0;
+      const totalSize = dataSize * entry.numValues;
+      const offset = totalSize > 4 ? tiffStart + g32(entry.valueOffset) : entry.valueOffset;
+      if (entry.type === 2) return readString(offset, entry.numValues); // ASCII
+      if (entry.type === 5 || entry.type === 10) return offset; // Rational offset
+      if (entry.type === 3) return g16(offset); // SHORT
+      if (entry.type === 4) return g32(offset); // LONG
+      if (entry.type === 1) return view.getUint8(offset); // BYTE
+      return null;
+    }
+
+    function dmsToDecimal(rationalOffset, count) {
+      if (count < 3) return null;
+      const deg = getRational(rationalOffset);
+      const min = getRational(rationalOffset + 8);
+      const sec = getRational(rationalOffset + 16);
+      return deg + min / 60 + sec / 3600;
+    }
+
+    const result = { latitude: null, longitude: null, altitude: null, dateTime: null, cameraMake: null, cameraModel: null };
+
+    try {
+      const ifd0Offset = tiffStart + g32(tiffStart + 4);
+      const ifd0 = readIFDEntries(ifd0Offset);
+
+      // Camera Make (tag 0x010F) and Model (tag 0x0110)
+      if (ifd0[0x010F]) result.cameraMake = getEntryValue(ifd0[0x010F]);
+      if (ifd0[0x0110]) result.cameraModel = getEntryValue(ifd0[0x0110]);
+
+      // Find EXIF sub-IFD for DateTimeOriginal
+      if (ifd0[0x8769]) {
+        const exifIFDOffset = tiffStart + g32(ifd0[0x8769].valueOffset);
+        const exifIFD = readIFDEntries(exifIFDOffset);
+        // DateTimeOriginal (0x9003) or DateTimeDigitized (0x9004) or DateTime (0x0132)
+        const dtTag = exifIFD[0x9003] || exifIFD[0x9004];
+        if (dtTag) {
+          const dtStr = getEntryValue(dtTag);
+          if (dtStr) {
+            // Format: "YYYY:MM:DD HH:MM:SS" -> ISO
+            const iso = dtStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T');
+            result.dateTime = iso;
+          }
+        }
+      }
+      if (!result.dateTime && ifd0[0x0132]) {
+        const dtStr = getEntryValue(ifd0[0x0132]);
+        if (dtStr) {
+          const iso = dtStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T');
+          result.dateTime = iso;
+        }
+      }
+
+      // Find GPS IFD
+      if (ifd0[0x8825]) {
+        const gpsIFDOffset = tiffStart + g32(ifd0[0x8825].valueOffset);
+        const gpsIFD = readIFDEntries(gpsIFDOffset);
+
+        // Latitude: tag 0x0002 (value), 0x0001 (ref N/S)
+        if (gpsIFD[0x0002] && gpsIFD[0x0001]) {
+          const latRef = getEntryValue(gpsIFD[0x0001]);
+          const latOffset = getEntryValue(gpsIFD[0x0002]);
+          let lat = dmsToDecimal(latOffset, gpsIFD[0x0002].numValues);
+          if (lat != null && (latRef === 'S' || latRef === 83)) lat = -lat;
+          result.latitude = lat;
+        }
+
+        // Longitude: tag 0x0004 (value), 0x0003 (ref E/W)
+        if (gpsIFD[0x0004] && gpsIFD[0x0003]) {
+          const lonRef = getEntryValue(gpsIFD[0x0003]);
+          const lonOffset = getEntryValue(gpsIFD[0x0004]);
+          let lon = dmsToDecimal(lonOffset, gpsIFD[0x0004].numValues);
+          if (lon != null && (lonRef === 'W' || lonRef === 87)) lon = -lon;
+          result.longitude = lon;
+        }
+
+        // Altitude: tag 0x0006 (value), 0x0005 (ref: 0=above sea, 1=below)
+        if (gpsIFD[0x0006]) {
+          const altOffset = getEntryValue(gpsIFD[0x0006]);
+          let alt = getRational(altOffset);
+          if (gpsIFD[0x0005]) {
+            const altRef = getEntryValue(gpsIFD[0x0005]);
+            if (altRef === 1) alt = -alt;
+          }
+          result.altitude = alt;
+        }
+      }
+    } catch (e) {
+      // Partial parse is fine, return what we have
+    }
+
+    // Return null if nothing useful was found
+    if (result.latitude == null && result.dateTime == null && result.cameraMake == null) return null;
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
   // GPS helper
   // ---------------------------------------------------------------------------
   function getGPS() {
@@ -482,33 +655,67 @@
       const file = input.files[0];
       if (!file) return;
 
-      showSpinner('Acquiring GPS...');
+      const isUpload = mode === 'file';
 
-      const [gps, thumbnail] = await Promise.all([
-        getGPS(),
-        generateThumbnail(file)
-      ]);
+      showSpinner(isUpload ? 'Reading file metadata...' : 'Acquiring GPS...');
+
+      const tasks = [generateThumbnail(file)];
+      if (isUpload) {
+        tasks.push(extractExifData(file));
+      } else {
+        tasks.push(getGPS());
+      }
+
+      const [thumbnail, metaOrGps] = await Promise.all(tasks);
 
       hideSpinner();
+
+      let latitude = null, longitude = null, altitude = null, locationAccuracy = null;
+      let capturedAt = new Date().toISOString();
+      let cameraMake = null, cameraModel = null;
+      let hasLocation = false;
+
+      if (isUpload && metaOrGps) {
+        // Use EXIF metadata from the file
+        const exif = metaOrGps;
+        latitude = exif.latitude;
+        longitude = exif.longitude;
+        altitude = exif.altitude;
+        locationAccuracy = null; // EXIF doesn't provide accuracy
+        if (exif.dateTime) capturedAt = exif.dateTime;
+        cameraMake = exif.cameraMake || null;
+        cameraModel = exif.cameraModel || null;
+        hasLocation = latitude != null;
+      } else if (!isUpload && metaOrGps) {
+        // Use device GPS for camera captures
+        const gps = metaOrGps;
+        latitude = gps.latitude;
+        longitude = gps.longitude;
+        altitude = gps.altitude;
+        locationAccuracy = gps.locationAccuracy;
+        hasLocation = true;
+      }
 
       const frame = {
         rollId: rollId,
         frameNumber: nextFrame,
         photoBlob: file,
         thumbnailBlob: thumbnail,
-        latitude: gps ? gps.latitude : null,
-        longitude: gps ? gps.longitude : null,
-        altitude: gps ? gps.altitude : null,
-        locationAccuracy: gps ? gps.locationAccuracy : null,
-        capturedAt: new Date().toISOString(),
+        latitude: latitude,
+        longitude: longitude,
+        altitude: altitude,
+        locationAccuracy: locationAccuracy,
+        capturedAt: capturedAt,
+        cameraMake: cameraMake,
+        cameraModel: cameraModel,
         notes: ''
       };
 
       await idbAdd('frames', frame);
 
-      if (!gps) {
-        // Brief warning then continue
-        showSpinner('Saved (no GPS)');
+      if (!hasLocation) {
+        const msg = isUpload ? 'Saved (no location in file)' : 'Saved (no GPS)';
+        showSpinner(msg);
         setTimeout(() => { hideSpinner(); renderRoll(rollId); }, 800);
       } else {
         await renderRoll(rollId);
@@ -549,7 +756,10 @@
       detailRow('Captured', formatDate(frame.capturedAt)),
       detailRow('Location', hasGPS ? formatCoord(frame.latitude, frame.longitude) : 'Not available'),
       detailRow('Altitude', frame.altitude != null ? frame.altitude.toFixed(1) + ' m' : '—'),
-      detailRow('GPS Accuracy', frame.locationAccuracy != null ? frame.locationAccuracy.toFixed(1) + ' m' : '—')
+      detailRow('GPS Accuracy', frame.locationAccuracy != null ? frame.locationAccuracy.toFixed(1) + ' m' : '—'),
+      detailRow('Camera', frame.cameraMake || frame.cameraModel
+        ? [frame.cameraMake, frame.cameraModel].filter(Boolean).join(' ')
+        : '—')
     );
     wrap.appendChild(section);
 
@@ -638,6 +848,8 @@
           longitude: f.longitude,
           altitude: f.altitude,
           locationAccuracy: f.locationAccuracy,
+          cameraMake: f.cameraMake || null,
+          cameraModel: f.cameraModel || null,
           notes: f.notes || ''
         }));
       return {
@@ -658,7 +870,7 @@
     const rollMap = {};
     for (const r of rolls) rollMap[r.id] = r;
 
-    const header = 'roll_name,film_stock,iso,frame_number,captured_at,latitude,longitude,altitude,accuracy,notes';
+    const header = 'roll_name,film_stock,iso,frame_number,captured_at,latitude,longitude,altitude,accuracy,camera,notes';
     const rows = frames
       .sort((a, b) => {
         if (a.rollId !== b.rollId) return a.rollId - b.rollId;
@@ -666,6 +878,7 @@
       })
       .map((f) => {
         const r = rollMap[f.rollId] || {};
+        const camera = [f.cameraMake, f.cameraModel].filter(Boolean).join(' ');
         return [
           csvEscape(r.name || ''),
           csvEscape(r.filmStock || ''),
@@ -676,6 +889,7 @@
           f.longitude != null ? f.longitude.toFixed(6) : '',
           f.altitude != null ? f.altitude.toFixed(1) : '',
           f.locationAccuracy != null ? f.locationAccuracy.toFixed(1) : '',
+          csvEscape(camera),
           csvEscape(f.notes || '')
         ].join(',');
       });
